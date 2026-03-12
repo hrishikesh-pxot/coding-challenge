@@ -33,7 +33,7 @@
             color: var(--text);
             height: 100vh;
             display: grid;
-            grid-template-rows: 52px 1fr auto;
+            grid-template-rows: 52px 1fr auto auto;
             overflow: hidden;
         }
 
@@ -111,11 +111,10 @@
             border-color: var(--text-muted);
         }
 
-        #run-btn {
-            background: var(--green);
+        .action-btn {
             color: #fff;
             border: none;
-            padding: 8px 20px;
+            padding: 8px 16px;
             border-radius: 6px;
             font-size: 13px;
             font-weight: 600;
@@ -127,16 +126,21 @@
             white-space: nowrap;
         }
 
-        #run-btn:hover:not(:disabled) {
-            background: #45a049;
+        .action-btn:hover:not(:disabled) {
             transform: translateY(-1px);
         }
 
-        #run-btn:disabled {
-            background: var(--bg-lighter);
+        .action-btn:disabled {
+            background: var(--bg-lighter) !important;
             color: var(--text-muted);
             cursor: not-allowed;
         }
+
+        #run-code-btn { background: var(--accent); }
+        #run-code-btn:hover:not(:disabled) { background: #4a8abf; }
+
+        #run-btn { background: var(--green); }
+        #run-btn:hover:not(:disabled) { background: #45a049; }
 
         .spinner {
             width: 14px;
@@ -481,14 +485,27 @@
             margin-top: 8px;
         }
 
-        /* ==================== CONSOLE OUTPUT ==================== */
-        .console-section {
-            border-bottom: 1px solid var(--border);
-            padding: 12px 20px;
+        /* ==================== CONSOLE PANEL ==================== */
+        #console-panel {
+            background: var(--bg-light);
+            border-top: 2px solid var(--border);
             display: none;
+            max-height: 30vh;
+            overflow-y: auto;
         }
 
-        .console-section.visible { display: block; }
+        #console-panel.visible { display: block; }
+
+        .console-header {
+            display: flex;
+            align-items: center;
+            padding: 8px 20px;
+            position: sticky;
+            top: 0;
+            background: var(--bg-light);
+            border-bottom: 1px solid var(--border);
+            z-index: 5;
+        }
 
         .console-label {
             font-size: 11px;
@@ -496,11 +513,15 @@
             color: var(--accent);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 8px;
+        }
+
+        .console-header .results-close-btn {
+            margin-left: auto;
         }
 
         .console-output {
             background: #0d0d0d;
+            margin: 12px 20px 16px;
             border: 1px solid var(--border);
             border-radius: 4px;
             padding: 10px 12px;
@@ -559,7 +580,11 @@
         <button class="timer-btn" id="timer-reset-btn" title="Reset timer">&#8635;</button>
     </div>
     <div class="header-divider"></div>
-    <button id="run-btn" disabled>
+    <button class="action-btn" id="run-code-btn" disabled>
+        <span class="spinner"></span>
+        Loading Python...
+    </button>
+    <button class="action-btn" id="run-btn" disabled>
         <span class="spinner"></span>
         Loading Python...
     </button>
@@ -627,15 +652,20 @@
 
 </main>
 
+<!-- ==================== CONSOLE PANEL ==================== -->
+<section id="console-panel">
+    <div class="console-header">
+        <span class="console-label">Console Output</span>
+        <button class="results-close-btn" id="console-close-btn" title="Close console">&times;</button>
+    </div>
+    <div class="console-output" id="console-output"></div>
+</section>
+
 <!-- ==================== RESULTS PANEL ==================== -->
 <section id="results-panel">
     <div class="results-header">
         <span class="results-summary" id="results-summary"></span>
         <button class="results-close-btn" id="results-close-btn" title="Close results">&times;</button>
-    </div>
-    <div class="console-section" id="console-section">
-        <div class="console-label">Console Output</div>
-        <div class="console-output" id="console-output"></div>
     </div>
     <div class="results-cards" id="results-cards"></div>
 </section>
@@ -719,6 +749,7 @@
             'Tab': function (cm) {
                 cm.replaceSelection('    ', 'end');
             },
+            'Shift-Enter': function () { runCode(); },
             'Ctrl-Enter': function () { runTests(); },
             'Cmd-Enter': function () { runTests(); }
         }
@@ -795,15 +826,39 @@
     // ==================== PYODIDE WORKER ====================
     let worker = null;
     let workerReady = false;
-    let pendingRun = null;
+    let currentMode = null; // 'code' or 'tests'
     let runTimeout = null;
     const runBtn = document.getElementById('run-btn');
+    const runCodeBtn = document.getElementById('run-code-btn');
     const loadingOverlay = document.getElementById('loading-overlay');
+
+    function setButtonsLoading() {
+        runBtn.disabled = true;
+        runCodeBtn.disabled = true;
+        runBtn.innerHTML = '<span class="spinner"></span> Loading Python...';
+        runCodeBtn.innerHTML = '<span class="spinner"></span> Loading...';
+    }
+
+    function setButtonsReady() {
+        runBtn.disabled = false;
+        runCodeBtn.disabled = false;
+        runBtn.innerHTML = '&#9654; Run Tests <span class="kbd">Ctrl+Enter</span>';
+        runCodeBtn.innerHTML = '&#9654; Run Code <span class="kbd">Shift+Enter</span>';
+    }
+
+    function setButtonsRunning() {
+        runBtn.disabled = true;
+        runCodeBtn.disabled = true;
+        if (currentMode === 'code') {
+            runCodeBtn.innerHTML = '<span class="spinner"></span> Running...';
+        } else {
+            runBtn.innerHTML = '<span class="spinner"></span> Running...';
+        }
+    }
 
     function createWorker() {
         workerReady = false;
-        runBtn.disabled = true;
-        runBtn.innerHTML = '<span class="spinner"></span> Loading Python...';
+        setButtonsLoading();
         loadingOverlay.classList.add('active');
 
         worker = new Worker('pyodide-worker.js');
@@ -813,28 +868,30 @@
 
             if (data.type === 'ready') {
                 workerReady = true;
-                runBtn.disabled = false;
-                runBtn.innerHTML = '&#9654; Run Tests <span class="kbd">Ctrl+Enter</span>';
+                setButtonsReady();
                 loadingOverlay.classList.remove('active');
             } else if (data.type === 'result') {
                 clearTimeout(runTimeout);
-                handleResult(data);
+                if (currentMode === 'code') {
+                    handleCodeResult(data);
+                } else {
+                    handleTestResult(data);
+                }
             } else if (data.type === 'error') {
                 loadingOverlay.classList.remove('active');
-                runBtn.disabled = false;
-                runBtn.innerHTML = '&#9654; Run Tests <span class="kbd">Ctrl+Enter</span>';
+                setButtonsReady();
                 showError('Failed to load Python runtime. Check your internet connection and reload the page.');
             }
         };
 
         worker.onerror = function () {
             loadingOverlay.classList.remove('active');
-            runBtn.disabled = false;
-            runBtn.textContent = 'Retry Loading';
-            runBtn.onclick = function () {
+            setButtonsReady();
+            runCodeBtn.textContent = 'Retry Loading';
+            runCodeBtn.onclick = function () {
                 if (worker) worker.terminate();
                 createWorker();
-                runBtn.onclick = null;
+                runCodeBtn.onclick = null;
             };
         };
     }
@@ -888,46 +945,69 @@ _test_results_json = json.dumps(_results)
 `;
     }
 
-    function runTests() {
+    // ==================== RUN CODE (just execute + show console) ====================
+    function runCode() {
         if (!workerReady) return;
+        currentMode = 'code';
+        setButtonsRunning();
 
-        // Show running state
-        runBtn.disabled = true;
-        runBtn.innerHTML = '<span class="spinner"></span> Running...';
+        var code = editor.getValue();
 
-        const code = editor.getValue();
-        const testScript = buildTestScript(code);
-
-        // Set timeout for infinite loops (10 seconds)
         runTimeout = setTimeout(function () {
             worker.terminate();
             worker = null;
             workerReady = false;
+            showConsole('Execution timed out after 10 seconds. Your code may contain an infinite loop.', true);
+            setButtonsLoading();
+            createWorker();
+        }, 10000);
 
+        worker.postMessage({ type: 'run', id: Date.now(), code: code });
+    }
+
+    function handleCodeResult(data) {
+        setButtonsReady();
+
+        var output = '';
+        if (data.stdout && data.stdout.trim()) {
+            output = data.stdout;
+        }
+        if (data.error) {
+            output += (output ? '\n' : '') + data.error;
+        }
+        showConsole(output || '(no output)', !!(data.error && !data.stdout.trim()));
+    }
+
+    // ==================== RUN TESTS ====================
+    function runTests() {
+        if (!workerReady) return;
+        currentMode = 'tests';
+        setButtonsRunning();
+
+        var code = editor.getValue();
+        var testScript = buildTestScript(code);
+
+        runTimeout = setTimeout(function () {
+            worker.terminate();
+            worker = null;
+            workerReady = false;
             showError('Execution timed out after 10 seconds. Your code may contain an infinite loop.');
-
-            runBtn.disabled = true;
-            runBtn.innerHTML = '<span class="spinner"></span> Reloading Python...';
-
-            // Recreate worker
+            setButtonsLoading();
             createWorker();
         }, 10000);
 
         worker.postMessage({ type: 'run', id: Date.now(), code: testScript });
     }
 
-    function handleResult(data) {
-        runBtn.disabled = false;
-        runBtn.innerHTML = '&#9654; Run Tests <span class="kbd">Ctrl+Enter</span>';
+    function handleTestResult(data) {
+        setButtonsReady();
 
         // Show console output if candidate used print()
-        var consoleSection = document.getElementById('console-section');
-        var consoleOutput = document.getElementById('console-output');
-        if (data.stdout && data.stdout.trim()) {
-            consoleOutput.textContent = data.stdout;
-            consoleSection.classList.add('visible');
+        var consoleOutput = data.stdout && data.stdout.trim() ? data.stdout : '';
+        if (consoleOutput) {
+            showConsole(consoleOutput, false);
         } else {
-            consoleSection.classList.remove('visible');
+            document.getElementById('console-panel').classList.remove('visible');
         }
 
         // Handle test results (stored in Python variable, separate from stdout)
@@ -956,16 +1036,29 @@ _test_results_json = json.dumps(_results)
         resultsPanel.classList.remove('visible');
     });
 
-    // Also allow running tests by clicking the button
+    document.getElementById('console-close-btn').addEventListener('click', function () {
+        document.getElementById('console-panel').classList.remove('visible');
+    });
+
+    // Button click handlers
     runBtn.addEventListener('click', function () {
-        // Only if button doesn't have a custom onclick (retry state)
         if (!this.onclick) runTests();
     });
 
-    function showError(message) {
-        runBtn.disabled = false;
-        runBtn.innerHTML = '&#9654; Run Tests <span class="kbd">Ctrl+Enter</span>';
+    runCodeBtn.addEventListener('click', function () {
+        if (!this.onclick) runCode();
+    });
 
+    function showConsole(text, isError) {
+        var panel = document.getElementById('console-panel');
+        var output = document.getElementById('console-output');
+        output.textContent = text;
+        output.style.color = isError ? 'var(--red)' : '#a8d8a8';
+        panel.classList.add('visible');
+    }
+
+    function showError(message) {
+        setButtonsReady();
         resultsPanel.classList.add('visible');
         resultsSummary.textContent = 'Error';
         resultsSummary.className = 'results-summary has-fail';
