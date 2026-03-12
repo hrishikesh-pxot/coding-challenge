@@ -61,17 +61,6 @@
             background: var(--border);
         }
 
-        .difficulty-badge {
-            background: var(--orange);
-            color: #000;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 2px 8px;
-            border-radius: 3px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
         .header-spacer { flex: 1; }
 
         #timer {
@@ -492,6 +481,39 @@
             margin-top: 8px;
         }
 
+        /* ==================== CONSOLE OUTPUT ==================== */
+        .console-section {
+            border-bottom: 1px solid var(--border);
+            padding: 12px 20px;
+            display: none;
+        }
+
+        .console-section.visible { display: block; }
+
+        .console-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .console-output {
+            background: #0d0d0d;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 10px 12px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px;
+            color: #a8d8a8;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 150px;
+            overflow-y: auto;
+            line-height: 1.5;
+        }
+
         /* ==================== LOADING OVERLAY ==================== */
         #loading-overlay {
             position: fixed;
@@ -530,8 +552,6 @@
 <!-- ==================== HEADER ==================== -->
 <header id="header">
     <div class="header-title">Coding Challenge</div>
-    <div class="header-divider"></div>
-    <span class="difficulty-badge">Medium</span>
     <div class="header-spacer"></div>
     <div id="timer">20:00</div>
     <div id="timer-controls">
@@ -554,7 +574,7 @@
 
         <p>You are given a grayscale image represented as an <strong>N&times;N</strong> 2D list of pixel values (integers 0&ndash;255).</p>
 
-        <p>Write a function <code>rotate_image(image)</code> that rotates the image <strong>90 degrees clockwise in-place</strong> &mdash; meaning you cannot create a new 2D list, you must modify the original.</p>
+        <p>Write a function <code>rotate_image(image)</code> that rotates the image <strong>90 degrees clockwise in-place</strong>, meaning you cannot create a new 2D list, you must modify the original.</p>
 
         <h3>Example</h3>
 
@@ -612,6 +632,10 @@
     <div class="results-header">
         <span class="results-summary" id="results-summary"></span>
         <button class="results-close-btn" id="results-close-btn" title="Close results">&times;</button>
+    </div>
+    <div class="console-section" id="console-section">
+        <div class="console-label">Console Output</div>
+        <div class="console-output" id="console-output"></div>
     </div>
     <div class="results-cards" id="results-cards"></div>
 </section>
@@ -859,7 +883,8 @@ for _t in _tests:
             "error": type(_e).__name__ + ": " + str(_e)
         })
 
-print(json.dumps(_results))
+# Store results in a variable (not stdout) so candidate print() works
+_test_results_json = json.dumps(_results)
 `;
     }
 
@@ -895,26 +920,30 @@ print(json.dumps(_results))
         runBtn.disabled = false;
         runBtn.innerHTML = '&#9654; Run Tests <span class="kbd">Ctrl+Enter</span>';
 
-        if (data.error && !data.output) {
-            showError(data.error);
-            return;
+        // Show console output if candidate used print()
+        var consoleSection = document.getElementById('console-section');
+        var consoleOutput = document.getElementById('console-output');
+        if (data.stdout && data.stdout.trim()) {
+            consoleOutput.textContent = data.stdout;
+            consoleSection.classList.add('visible');
+        } else {
+            consoleSection.classList.remove('visible');
         }
 
-        try {
-            const results = JSON.parse(data.output.trim());
-            renderResults(results);
-        } catch (e) {
-            // If JSON parse fails, the candidate's code might have print() statements
-            // that corrupted the output. Try to extract JSON from the output.
-            const jsonMatch = data.output.match(/\[.*\]/s);
-            if (jsonMatch) {
-                try {
-                    const results = JSON.parse(jsonMatch[0]);
-                    renderResults(results);
-                    return;
-                } catch (e2) { /* fall through */ }
-            }
-            showError('Could not parse test results. Your code may have print() statements that interfered with output.\n\nRaw output:\n' + (data.output || '') + '\n' + (data.error || ''));
+        // Handle test results (stored in Python variable, separate from stdout)
+        if (data.testResults) {
+            try {
+                var results = JSON.parse(data.testResults);
+                renderResults(results);
+                return;
+            } catch (e) { /* fall through */ }
+        }
+
+        // If no test results variable, there was an error before tests could run
+        if (data.error) {
+            showError(data.error);
+        } else {
+            showError('Could not run tests. Check your code for syntax errors.');
         }
     }
 

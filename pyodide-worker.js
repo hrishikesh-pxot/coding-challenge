@@ -27,20 +27,37 @@ sys.stderr = io.StringIO()
 `);
             pyodide.runPython(code);
 
+            // Read candidate's print() output (stdout) separately from test results
             const stdout = pyodide.runPython('sys.stdout.getvalue()');
             const stderr = pyodide.runPython('sys.stderr.getvalue()');
+
+            // Read test results from Python variable (not stdout)
+            let testResults = null;
+            try {
+                testResults = pyodide.runPython('_test_results_json');
+            } catch (e) {
+                // Variable may not exist if candidate code errored before tests ran
+            }
 
             self.postMessage({
                 type: 'result',
                 id,
-                output: stdout,
+                stdout: stdout,
+                testResults: testResults,
                 error: stderr || null
             });
         } catch (err) {
+            // Capture any stdout that was printed before the error
+            let stdout = '';
+            try {
+                stdout = pyodide.runPython('sys.stdout.getvalue()');
+            } catch (e) { /* ignore */ }
+
             self.postMessage({
                 type: 'result',
                 id,
-                output: '',
+                stdout: stdout,
+                testResults: null,
                 error: err.message
             });
         }
